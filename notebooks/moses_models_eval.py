@@ -26,7 +26,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def format_combo(combo_file, complexity=False):
+def format_combo(combo_file):
     """
     Build model objects from the moses output
     :param combo_file: The path to the raw combo output
@@ -36,23 +36,16 @@ def format_combo(combo_file, complexity=False):
     models = []
     with open(combo_file, "r") as fp:
         for line in fp:
-            if complexity:
-                match = output_regex_w_complexity.match(line.strip())
-            else:
-                match = output_regex_no_complexity.match(line.strip())
+            match = output_regex_no_complexity.match(line.strip())
             if match is not None:
                 model = match.group(2).strip()
                 if model == "true" or model == "false":
                     continue
-                if complexity:
-                    complexity = match.group(3).split(",")[2].split("=")[1]
-                    models.append(MosesModel(model, complexity))
-                else:
-                    models.append(MosesModel(model, None))
+                models.append(model)
 
     return models
 
-def run_eval(self, models, input_file):
+def run_eval(models, input_file, target_feature):
         """
         Evaluate a list of model objects against an input file
         :param: models: list of model objects
@@ -71,20 +64,19 @@ def run_eval(self, models, input_file):
 
         for i, moses_model in enumerate(models):
             cmd = ['eval-table', "-i", input_file, "-c", moses_model, "-o", temp_eval_file, "-u",
-                   self.target_feature, "-f", eval_log]
+                   target_feature, "-f", eval_log]
             process = subprocess.Popen(args=cmd, stdout=subprocess.PIPE)
 
             stdout, stderr = process.communicate()
 
             if process.returncode == 0:
-                matrix[,:i] = np.genfromtxt(temp_eval_file, skip_header=1, dtype=int)
+                matrix[:,i] = np.genfromtxt(temp_eval_file, skip_header=1, dtype=int)
             else:
-                self.logger.error("The following error raised by eval-table %s" % stderr.decode("utf-8"))
                 raise ChildProcessError(stderr.decode("utf-8"))
         return matrix
 
 
-def score_models(self, matrix, input_file):
+def score_models(matrix, input_file, target_feature):
         """
         Takes a matrix containing the predicted value of each model and a file to containing the actual target values
         It calculates the accuracy, recall, precision, f1 score and the p_value from mcnemar test of each model
@@ -96,7 +88,7 @@ def score_models(self, matrix, input_file):
         score_matrix = np.empty([0, 5])
 
         df = pd.read_csv(input_file)
-        target_value = df[self.target_feature].values
+        target_value = df[target_feature].values
         null_value = np.zeros((len(target_value),))
 
         for i in range(matrix.shape[1]):
@@ -106,6 +98,7 @@ def score_models(self, matrix, input_file):
             score_matrix = score_matrix.append(score_matrix, np.array([[recall, precision, accuracy, f_score, p_value]]))
 
         return score_matrix
+
 
 def evaluate_models():
     print("Starting..")
@@ -123,16 +116,15 @@ def evaluate_models():
         return
     print("Parsing Models...")
     models = format_combo(combo_file)
-    model_eval = ModelEvaluator(target_col)
     print("Evaluating Models...")
-    matrix = model_eval.run_eval(models, input_file)
-    scores = model_eval.score_models(matrix, input_file)
+    matrix = run_eval(models, input_file, target_col)
+    scores = score_models(matrix, input_file, target_col)
 
     res_matrix = np.empty([len(models), 1])
     for model in models:
         res_matrix = np.append(res_matrix, np.array([[model]]))
 
-    df_data = np.concatenate(res_matrix, scores, axis=1)
+    df_data = np.concatenate((res_matrix, scores), axis=1)
     output_csv = pd.DataFrame(df_data, columns=["model", "recall", "precision", "accuracy", "f_score", "p_value"])
     output_csv.to_csv(output_file, index=False)
 
