@@ -81,3 +81,6 @@ def evaluate_models():
     output_csv.to_csv(output_file, index=False)
 
     print("Done!")
+
+if __name__ == "__main__":
+    evaluate_models()
