@@ -8,7 +8,8 @@ import numpy as np
 import re
 import os
 
-output_regex = re.compile(r"(-?\d+) (.+) \[(.+)\]")
+output_regex_no_complexity = re.compile(r"(-?\d+) (.+)")
+output_regex_w_complexity = re.compile(r"(-?\d+) (.+) \[(.+)\]")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="A script to get scores of MOSES Models")
@@ -33,7 +34,10 @@ def format_combo(combo_file, complexity=False):
     models = []
     with open(combo_file, "r") as fp:
         for line in fp:
-            match = output_regex.match(line.strip())
+            if complexity:
+                match = output_regex_w_complexity.match(line.strip())
+            else:
+                match = output_regex_no_complexity.match(line.strip())
             if match is not None:
                 model = match.group(2).strip()
                 if model == "true" or model == "false":
