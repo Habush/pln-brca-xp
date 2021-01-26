@@ -79,7 +79,6 @@ def evaluate_models():
         res_dict["model"].append(model)
         res_dict["recall"].append(model.test_score.recall)
         res_dict["precision"].append(model.test_score.precision)
-        res_dict["accuracy"].append(model.test_score.accuracy)
 
     output_csv = pd.DataFrame(res_dict)
     output_csv.to_csv(output_file, index=False)
