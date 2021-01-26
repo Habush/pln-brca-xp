@@ -74,12 +74,15 @@ def evaluate_models():
     for model, score in zip(models, scores):
         model.test_score = score
 
-    cols = ["model", "recall_test", "precision_test"]
-    res_matrix = np.empty([len(models), 3])
+    res = []
     for i, model in enumerate(models):
-        for j, k in enumerate(cols):
-            res_matrix[i][j] = model[k]
-    output_csv = pd.DataFrame(data=res_matrix, columns=["model", "recall", "precision"])
+        res.append({
+            "model": model.model,
+            "recall": model.test_score.recall,
+            "precision": model.test_score.precision
+        })
+
+    output_csv = pd.DataFrame(res)
     output_csv.to_csv(output_file, index=False)
 
     print("Done!")
