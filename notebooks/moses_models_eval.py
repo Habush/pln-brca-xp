@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 import re
 import os
+import tempfile
+import subprocess
 
 output_regex_no_complexity = re.compile(r"(-?\d+) (.+)")
 output_regex_w_complexity = re.compile(r"(-?\d+) (.+) \[(.+)\]")
@@ -50,6 +52,61 @@ def format_combo(combo_file, complexity=False):
 
     return models
 
+def run_eval(self, models, input_file):
+        """
+        Evaluate a list of model objects against an input file
+        :param: models: list of model objects
+        :param input_file: the location of the input file
+        :return: matrix:
+        nxm matrix where n is the number of models and m is the number of samples. the matrix contains the predicted
+        output of each model on the sample
+        """
+
+        input_df = pd.read_csv(input_file)
+        num_samples, num_models = input_df.shape[0], len(models)
+        matrix = np.empty((num_samples, num_models), dtype=int)
+
+        temp_eval_file = tempfile.NamedTemporaryFile().name
+        eval_log = tempfile.NamedTemporaryFile().name
+
+        for i, moses_model in enumerate(models):
+            cmd = ['eval-table', "-i", input_file, "-c", moses_model, "-o", temp_eval_file, "-u",
+                   self.target_feature, "-f", eval_log]
+            process = subprocess.Popen(args=cmd, stdout=subprocess.PIPE)
+
+            stdout, stderr = process.communicate()
+
+            if process.returncode == 0:
+                matrix[,:i] = np.genfromtxt(temp_eval_file, skip_header=1, dtype=int)
+            else:
+                self.logger.error("The following error raised by eval-table %s" % stderr.decode("utf-8"))
+                raise ChildProcessError(stderr.decode("utf-8"))
+        return matrix
+
+
+def score_models(self, matrix, input_file):
+        """
+        Takes a matrix containing the predicted value of each model and a file to containing the actual target values
+        It calculates the accuracy, recall, precision, f1 score and the p_value from mcnemar test of each model
+        :param matrix: The input matrix
+        containing the predicted values for each model. This the matrix returned by functions like run-eval
+        :param input_file: this the test file containing the actual target values
+        :return: matrix: returns an nx4 matrix where n is the number of model.
+        """
+        score_matrix = np.empty([0, 5])
+
+        df = pd.read_csv(input_file)
+        target_value = df[self.target_feature].values
+        null_value = np.zeros((len(target_value),))
+
+        for i in range(matrix.shape[1]):
+            y_pred = matrix[:,i]
+            recall, precision, accuracy, f_score = ModelEvaluator._get_scores(target_value, y_pred)
+            p_value = ModelEvaluator.mcnemar_test(target_value, y_pred, null_value)
+            score_matrix = score_matrix.append(score_matrix, np.array([[recall, precision, accuracy, f_score, p_value]]))
+
+        return score_matrix
+
 def evaluate_models():
     print("Starting..")
     args = parse_args()
@@ -71,18 +128,12 @@ def evaluate_models():
     matrix = model_eval.run_eval(models, input_file)
     scores = model_eval.score_models(matrix, input_file)
 
-    for model, score in zip(models, scores):
-        model.test_score = score
+    res_matrix = np.empty([len(models), 1])
+    for model in models:
+        res_matrix = np.append(res_matrix, np.array([[model]]))
 
-    res = []
-    for i, model in enumerate(models):
-        res.append({
-            "model": model.model,
-            "recall": model.test_score.recall,
-            "precision": model.test_score.precision
-        })
-
-    output_csv = pd.DataFrame(res)
+    df_data = np.concatenate(res_matrix, scores, axis=1)
+    output_csv = pd.DataFrame(df_data, columns=["model", "recall", "precision", "accuracy", "f_score", "p_value"])
     output_csv.to_csv(output_file, index=False)
 
     print("Done!")
