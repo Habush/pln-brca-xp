@@ -35,7 +35,7 @@ def format_combo(combo_file):
 
     models = []
     with open(combo_file, "r") as fp:
-        for line in fp:
+        for line in fp.readlines():
             match = output_regex_no_complexity.match(line.strip())
             if match is not None:
                 model = match.group(2).strip()
@@ -95,7 +95,7 @@ def score_models(matrix, input_file, target_feature):
             y_pred = matrix[:,i]
             recall, precision, accuracy, f_score = ModelEvaluator._get_scores(target_value, y_pred)
             p_value = ModelEvaluator.mcnemar_test(target_value, y_pred, null_value)
-            score_matrix = score_matrix.append(score_matrix, np.array([[recall, precision, accuracy, f_score, p_value]]))
+            score_matrix = np.append(score_matrix, np.array([[recall, precision, accuracy, f_score, p_value]]), axis=0)
 
         return score_matrix
 
@@ -120,11 +120,8 @@ def evaluate_models():
     matrix = run_eval(models, input_file, target_col)
     scores = score_models(matrix, input_file, target_col)
 
-    res_matrix = np.empty([len(models), 1])
-    for model in models:
-        res_matrix = np.append(res_matrix, np.array([[model]]))
-
-    df_data = np.concatenate((res_matrix, scores), axis=1)
+    res_matrix = np.array([models])
+    df_data = np.concatenate((res_matrix.T, scores), axis=1)
     output_csv = pd.DataFrame(df_data, columns=["model", "recall", "precision", "accuracy", "f_score", "p_value"])
     output_csv.to_csv(output_file, index=False)
 
