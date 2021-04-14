@@ -7,10 +7,12 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import log_loss
+
 warnings.filterwarnings('ignore')
 from datetime import datetime
 from sklearn.model_selection import RandomizedSearchCV, cross_validate
-from sklearn.metrics import roc_auc_score, make_scorer, roc_curve, auc, confusion_matrix, average_precision_score, plot_confusion_matrix
+from sklearn.metrics import roc_auc_score, make_scorer, roc_curve, auc, confusion_matrix, average_precision_score, \
+    plot_confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 from xgboost import XGBClassifier
 from sklearn.metrics import precision_score, recall_score, balanced_accuracy_score
@@ -18,31 +20,34 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, QuantileTransformer
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.base import TransformerMixin
+from sklearn.linear_model import LogisticRegression
+import math
+from collections import OrderedDict
 
 params = {
-          # 'n_estimators': [300, 400, 500, 600, 700],
-          'n_estimators': [20, 50, 80, 120, 150],
-          'learning_rate': [0.01, 0.02, 0.03, 0.05, 0.07],
-          'gamma': [0.5, 1, 1.5, 2, 5],
-          'max_depth': [3, 4, 5, 6],
-          'subsample': [0.6, 0.8, 1.0],
-          'colsample_bytree': [0.6, 0.8, 1.0],
-          'min_child_weight': [1, 2, 3, 4, 5],
-          'scale_pos_weight': [0.1, 0.3, 0.5, 0.7, 0.9],
-          'max_delta_step': [1, 2, 3, 4, 5]
+    # 'n_estimators': [300, 400, 500, 600, 700],
+    'n_estimators': [20, 50, 80, 120, 150],
+    'learning_rate': [0.01, 0.02, 0.03, 0.05, 0.07],
+    'gamma': [0.5, 1, 1.5, 2, 5],
+    'max_depth': [3, 4, 5, 6],
+    'subsample': [0.6, 0.8, 1.0],
+    'colsample_bytree': [0.6, 0.8, 1.0],
+    'min_child_weight': [1, 2, 3, 4, 5],
+    'scale_pos_weight': [0.1, 0.3, 0.5, 0.7, 0.9],
+    'max_delta_step': [1, 2, 3, 4, 5]
 }
 
 params_no_scale = {
-          # 'n_estimators': [300, 400, 500, 600, 700],
-          'n_estimators': [20, 50, 80, 120, 150],
-          'learning_rate': [0.01, 0.02, 0.03, 0.05, 0.07],
-          'gamma': [0.5, 1, 1.5, 2, 5],
-          'max_depth': [3, 4, 5, 6],
-          'subsample': [0.6, 0.8, 1.0],
-          'colsample_bytree': [0.6, 0.8, 1.0],
-          'min_child_weight': [1, 2, 3, 4, 5]
-          # 'scale_pos_weight': [0.1, 0.3, 0.5, 0.7, 0.9],
-          # 'max_delta_step': [1, 2, 3, 4, 5]
+    # 'n_estimators': [300, 400, 500, 600, 700],
+    'n_estimators': [20, 50, 80, 120, 150],
+    'learning_rate': [0.01, 0.02, 0.03, 0.05, 0.07],
+    'gamma': [0.5, 1, 1.5, 2, 5],
+    'max_depth': [3, 4, 5, 6],
+    'subsample': [0.6, 0.8, 1.0],
+    'colsample_bytree': [0.6, 0.8, 1.0],
+    'min_child_weight': [1, 2, 3, 4, 5]
+    # 'scale_pos_weight': [0.1, 0.3, 0.5, 0.7, 0.9],
+    # 'max_delta_step': [1, 2, 3, 4, 5]
 }
 
 seed = 42
@@ -50,13 +55,15 @@ st_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
 
 score_cols = ["test_balanced_accuracy", "test_recall_0", "test_precision_0", "test_recall_1",
               "test_precision_1", "test_auc", "test_specificity", "test_average_precision_0"]
-cv_df_cols = ["balanced_accuracy", "recall_0", "precision_0", "recall_1", "precision_1", "auc", "specificity", "average_precision_0"]
+cv_df_cols = ["balanced_accuracy", "recall_0", "precision_0", "recall_1", "precision_1", "auc", "specificity",
+              "average_precision_0"]
 
 
 def calc_scores(clf, X_test, y_test):
     y_pred = clf.predict(X_test)
     recall_0, recall_1 = recall_score(y_test, y_pred, pos_label=0), recall_score(y_test, y_pred, pos_label=1)
-    precision_0, precision_1 = precision_score(y_test, y_pred, pos_label=0), precision_score(y_test, y_pred, pos_label=1)
+    precision_0, precision_1 = precision_score(y_test, y_pred, pos_label=0), precision_score(y_test, y_pred,
+                                                                                             pos_label=1)
     sp = specificity(y_test, y_pred)
     acc = balanced_accuracy_score(y_test, y_pred)
     auc_score = roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1])
@@ -74,17 +81,20 @@ def precision_0(y_true, y_pred):
 
 
 def auc_0(y_true, y_pred):
-    fpr, tpr, _ = roc_curve(y_true, y_pred[:,0])
+    fpr, tpr, _ = roc_curve(y_true, y_pred[:, 0])
     return auc(fpr, tpr)
+
 
 def specificity(y_true, y_pred):
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     spec = tn / (tn + fp)
     return spec
 
+
 def avp_0(y_true, y_pred):
     avp = average_precision_score(y_true, y_pred, pos_label=0)
     return avp
+
 
 average_precision_0 = make_scorer(avp_0, greater_is_better=True)
 average_precision_1 = make_scorer(average_precision_score, greater_is_better=True)
@@ -115,15 +125,17 @@ def print_score_comparison(raw_score, emb_score, target_feature="posOutcome",
 
 
 def print_score_comparison_v2(cv_scores_1, cv_scores_2, test_scores_1, test_scores_2,
-                           header_1="Raw Score", header_2="Embedding Score", opt="Balanced Opt"):
+                              header_1="Raw Score", header_2="Embedding Score", opt="Balanced Opt"):
     print("\t{0} - {1}\n\n\t\t\t{2}\t\t\t\t{3}".format("Validation set", opt, header_1, header_2))
     print("\t\t-------------------------------------------------------")
     print("balanced_accuracy:\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["balanced_accuracy"].mean(),
                                                                 cv_scores_2["balanced_accuracy"].mean()))
-    print("recall_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["recall_0"].mean(), cv_scores_2["recall_0"].mean()))
+    print(
+        "recall_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["recall_0"].mean(), cv_scores_2["recall_0"].mean()))
     print("precision_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["precision_0"].mean(),
                                                             cv_scores_2["precision_0"].mean()))
-    print("recall_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["recall_1"].mean(), cv_scores_2["recall_1"].mean()))
+    print(
+        "recall_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["recall_1"].mean(), cv_scores_2["recall_1"].mean()))
     print("precision_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["precision_1"].mean(),
                                                             cv_scores_2["precision_1"].mean()))
     print("auc:\t\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(cv_scores_1["auc"].mean(), cv_scores_2["auc"].mean()))
@@ -133,14 +145,17 @@ def print_score_comparison_v2(cv_scores_1, cv_scores_2, test_scores_1, test_scor
     print("\t\t-------------------------------------------------------")
     print("balanced_accuracy:\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["balanced_accuracy"].mean(),
                                                                 test_scores_2["balanced_accuracy"].mean()))
-    print("recall_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["recall_0"].mean(), test_scores_2["recall_0"].mean()))
+    print("recall_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["recall_0"].mean(),
+                                                         test_scores_2["recall_0"].mean()))
     print("precision_0:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["precision_0"].mean(),
                                                             test_scores_2["precision_0"].mean()))
     print(
-        "recall_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["recall_1"].mean(), test_scores_2["recall_1"].mean()))
+        "recall_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["recall_1"].mean(),
+                                                       test_scores_2["recall_1"].mean()))
     print("precision_1:\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["precision_1"].mean(),
                                                             test_scores_2["precision_1"].mean()))
     print("auc:\t\t\t{0:.2%}\t\t\t\t{1:.2%}\n".format(test_scores_1["auc"].mean(), test_scores_2["auc"].mean()))
+
 
 def timer(start_time=None):
     if not start_time:
@@ -158,7 +173,8 @@ def param_tuning(X, y, n_folds=5, param_comb=25, scoring='roc_auc', jobs=12, sca
                         silent=True, nthread=1)
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
     if scale_weight:
-        rand_search = RandomizedSearchCV(xgb, param_distributions=params, n_iter=param_comb, scoring=scoring, n_jobs=jobs,
+        rand_search = RandomizedSearchCV(xgb, param_distributions=params, n_iter=param_comb, scoring=scoring,
+                                         n_jobs=jobs,
                                          cv=skf.split(X, y), verbose=3, random_state=42)
     else:
         rand_search = RandomizedSearchCV(xgb, param_distributions=params_no_scale, n_iter=param_comb, scoring=scoring,
@@ -212,8 +228,8 @@ def load_features(path):
 
 
 def evaluate_ge(df, target="posOutcome", outcome_cols=None, feats=None, jobs=-1,
-                params=None, scoring=scoring, rand_scoring="roc_auc", custom_clf=None, scale_weight=True, stratify=True, split=True):
-
+                params=None, scoring=scoring, rand_scoring="roc_auc", custom_clf=None, scale_weight=True, stratify=True,
+                split=True):
     if split:
         X, y = df.drop([target], axis=1), df[target]
         if stratify:
@@ -280,11 +296,14 @@ def mean_discretize_dataset(X, bins_labels=None):
     X_disc = pd.DataFrame(transformed, columns=ohe.get_feature_names(features))
     return X_disc
 
+
 def median_discretize_dataset(X):
     X_disc = X - X.median()
     return X_disc
 
-def optimize_param(params, opt_param, val_range, df, target="posOutcome" ,step=1, feats=None, outcome_cols=None, metric=None, n_jobs=-1, stratify=True):
+
+def optimize_param(params, opt_param, val_range, df, target="posOutcome", step=1, feats=None, outcome_cols=None,
+                   metric=None, n_jobs=-1, stratify=True):
     errors = []
     X, y = df.drop([target], axis=1), df[target]
     if stratify:
@@ -321,6 +340,7 @@ def optimize_param(params, opt_param, val_range, df, target="posOutcome" ,step=1
         print("Got highest score {0:.2f} at n={1}".format(highest_score["Score"], highest_score["K"]))
         print(errors)
         return highest_score["K"]
+
 
 def optimize_k_v1(df, target, exclude=None):
     if exclude is None:
@@ -365,7 +385,7 @@ def optimize_k_v2(X, y):
 
     least_err = sorted(errors, key=lambda k: k["Logloss"])[0]
     print("Got least Logloss {0:.2f} at n={1}".format(least_err["Logloss"],
-                                                   least_err["K"]))
+                                                      least_err["K"]))
 
     return least_err["K"]
 
@@ -449,6 +469,7 @@ def label_encode(df):
 
     return df
 
+
 def convert_df_to_atomese_repr(df, feats=None):
     if feats is not None:
         df_in = df[feats]
@@ -480,7 +501,7 @@ def convert_df_to_atomese_repr(df, feats=None):
     return df_out
 
 
-def get_train_test_set(df, train_ids, test_ids):
+def get_train_test_set(df, train_ids, test_ids, feats=None):
     train_set = []
     test_set = []
     with open(train_ids, "r") as fp:
@@ -494,7 +515,10 @@ def get_train_test_set(df, train_ids, test_ids):
     df_train, df_test = df.loc[train_idx], df.loc[test_idx]
     X_train, y_train = df_train.drop(["posOutcome"], axis=1), df_train["posOutcome"]
     X_test, y_test = df_test.drop(["posOutcome"], axis=1), df_test["posOutcome"]
-    return X_train, X_test, y_train, y_test
+    if feats is None:
+        return X_train, X_test, y_train, y_test
+    else:
+        return X_train.loc[:, feats], X_test.loc[:, feats], y_train, y_test
 
 
 def alt_train_test(df, features, target="posOutcome"):
@@ -505,9 +529,10 @@ def alt_train_test(df, features, target="posOutcome"):
         seed = int(np.random.random() * 100)
         print("Using seed: %d" % seed)
         x_train, x_test, y_train, y_test = train_test_split(X, y, random_state=seed, stratify=y, test_size=0.3)
-        _, _, cv_scores, test_scores = evaluate_ge((x_train, x_test, y_train, y_test), split=False, rand_scoring=average_precision_0, feats=features)
-        cv_score_matrix[i:,] = cv_scores.mean()
-        test_score_matrix[i:,] = test_scores.mean()
+        _, _, cv_scores, test_scores = evaluate_ge((x_train, x_test, y_train, y_test), split=False,
+                                                   rand_scoring=average_precision_0, feats=features)
+        cv_score_matrix[i:, ] = cv_scores.mean()
+        test_score_matrix[i:, ] = test_scores.mean()
 
     cv_scores_df = pd.DataFrame(cv_score_matrix, columns=cv_df_cols)
     test_scores_df = pd.DataFrame(test_score_matrix, columns=cv_df_cols)
@@ -518,6 +543,7 @@ class MQNormalizer(TransformerMixin):
     """
     Transforms raw gene expressions to a median and quantile-normalized version
     """
+
     def __init__(self, n_quantiles=5, subsample=int(1e5), scaler=None):
         self.medians = None
         if scaler is None:
@@ -540,19 +566,23 @@ class MQNormalizer(TransformerMixin):
         X_q = pd.DataFrame(X_q, columns=X_norm.columns, index=X_norm.index)
         return X_q
 
-def embedding_effect(X_train_raw, X_train_emb, X_test_raw, X_test_emb, y_train, y_test, num_rounds=20, scoring="balanced_accuracy"):
 
+def embedding_effect(X_train_raw, X_train_emb, X_test_raw, X_test_emb, y_train, y_test, num_rounds=20,
+                     scoring="balanced_accuracy"):
     train_scores = {}
     test_scores = {}
     params = []
     for i in range(num_rounds):
         print("Adding first %d dims from embedding: " % i)
-        if i == 0: #Just use raw
+        if i == 0:  # Just use raw
             X_train, X_test = X_train_raw, X_test_raw
         else:
-            X_train, X_test = pd.concat([X_train_raw, X_train_emb.iloc[:, :i]], axis=1, verify_integrity=True), pd.concat([X_test_raw, X_test_emb.iloc[:, :i]], axis=1, verify_integrity=True)
+            X_train, X_test = pd.concat([X_train_raw, X_train_emb.iloc[:, :i]], axis=1,
+                                        verify_integrity=True), pd.concat([X_test_raw, X_test_emb.iloc[:, :i]], axis=1,
+                                                                          verify_integrity=True)
 
-        params_raw_emb, clf_raw_emb, cv_scores_raw_emb, test_scores_raw_emb = evaluate_ge((X_train, X_test, y_train, y_test), split=False, rand_scoring=scoring)
+        params_raw_emb, clf_raw_emb, cv_scores_raw_emb, test_scores_raw_emb = evaluate_ge(
+            (X_train, X_test, y_train, y_test), split=False, rand_scoring=scoring)
         for score in cv_df_cols:
             if score not in train_scores:
                 train_scores[score] = []
@@ -561,3 +591,33 @@ def embedding_effect(X_train_raw, X_train_emb, X_test_raw, X_test_emb, y_train, 
             test_scores[score].append(test_scores_raw_emb[score].mean())
             params.append(params_raw_emb)
     return params, train_scores, test_scores
+
+
+def bmi(X, y, l=1):
+    feats = X.columns.to_list()
+    y_case, y_ctr = y[y == 0], y[y == 1]
+    X_case, X_ctr = X.loc[y_case.index], X.loc[y_ctr.index]
+
+    def bmi_f(f):
+        var_ctr = X_ctr[f].var()
+        var_tot = X[f].var()
+        var_ratio = var_ctr / var_tot
+        delta = X[f].mean() / X_ctr[f].mean()
+        delta_diff = delta if delta >= 1 else -1 / delta
+
+        # calculate true-positive rate for each class
+        lgr = LogisticRegression()
+        lgr.fit(X[f].values.reshape(-1, 1), y)
+        y_pred = lgr.predict(X[f].values.reshape(-1, 1))
+        cm = confusion_matrix(y, y_pred)
+        tp_case = cm[0, 0]  # True negative for 1's class is True positive for 0 class
+        tp_ctr = cm[1, 1]
+        return l * (tp_case * tp_ctr) * math.sqrt(
+            abs(delta_diff) * var_ratio)
+
+    feat_score = []
+    for feat in feats:
+        score = bmi_f(feat)
+        feat_score.append(score)
+
+    return pd.DataFrame(feat_score, index=feats, columns=["bmi"])
