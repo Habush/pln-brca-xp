@@ -1,12 +1,14 @@
 __author__ = 'Abdulrahman Semrie<hsamireh@gmail.com>'
 
 import sys
-
+import urllib
+import os
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import nevergrad as ng
 import numpy as np
 import pandas as pd
+import requests
 import scipy
 import seaborn as sns
 import torch
@@ -17,7 +19,13 @@ from numba import jit
 from sklearn.decomposition import KernelPCA
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics.pairwise import pairwise_kernels
-from sklearn.manifold import TSNE
+from goatools.cli.find_enrichment import GoeaCliFnc
+import collections as cx
+from convert_symbol_to_entrez import convert_symbol_to_geneid
+import subprocess
+from IPython.display import Image
+import xml.etree.ElementTree as ET
+from goatools.semantic import *
 
 @jit(nopython=True, parallel=True)
 def tanimoto(v1, v2):
@@ -202,6 +210,252 @@ def optimize_ker_param(X, y, param_name, ker="rbf", opt=ng.optimizers.NGOpt, r=(
     return recommendation.value[0][0][0]
 
 
-def print_array(arr):
+def print_array(arr, fp=sys.stdout):
     for x in arr:
-        sys.stdout.write(x + "\n")
+        fp.write(str(x) + "\n")
+
+
+def generate_over_under_expr(expr_df, summary_df, target):
+    log_pos_genes = summary_df[summary_df["log2fc"] > 0]["gene"].to_list()
+    log_neg_genes = summary_df[summary_df["log2fc"] < 0]["gene"].to_list()
+    case_idx = target[target == 0].index
+    ctr_idx = target[target == 1].index
+
+    genes = summary_df["gene"].to_list()
+    filtered_expr_df = expr_df[genes]
+    d1 = expr_df.shape[0]
+    overexpr_1_col_names, overexpr_0_col_names = {}, {}
+    underexpr_col_1_names, underexpr_col_0_names = {}, {}
+
+    def overexpr_1_series(col):
+        name = col.name + "_overexpr"
+        overexpr_1_col_names[col.name] = name
+        arr = np.zeros((d1,))
+        for i, idx in enumerate(col.index):
+            if idx in ctr_idx:
+                arr[i] = col.iloc[i]
+        return pd.Series(arr, name=name, index=col.index)
+
+    def overexpr_0_series(col):
+        name = col.name + "_overexpr"
+        overexpr_0_col_names[col.name] = name
+        arr = np.zeros((d1,))
+        for i, idx in enumerate(col.index):
+            if idx in case_idx:
+                arr[i] = col.iloc[i]
+        return pd.Series(arr, name=name, index=col.index)
+
+    def underexpr_1_series(col):
+        name = col.name + "_underexpr"
+        underexpr_col_1_names[col.name] = name
+        arr = np.zeros((d1,))
+        for i, idx in enumerate(col.index):
+            if idx in ctr_idx:
+                arr[i] = col.iloc[i]
+        return pd.Series(arr, name=name, index=col.index)
+
+    def underexpr_0_series(col):
+        name = col.name + "_underexpr"
+        underexpr_col_0_names[col.name] = name
+        arr = np.zeros((d1,))
+        for i, idx in enumerate(col.index):
+            if idx in case_idx:
+                arr[i] = col.iloc[i]
+        return pd.Series(arr, name=name, index=col.index)
+
+    log_pos_df = filtered_expr_df[log_pos_genes]
+    log_neg_df = filtered_expr_df[log_neg_genes]
+
+    overexpr_1_df, underexpr_1_df = log_pos_df.apply(overexpr_1_series), log_neg_df.apply(underexpr_1_series)
+    overexpr_0_df, underexpr_0_df = log_neg_df.apply(overexpr_0_series), log_pos_df.apply(underexpr_0_series)
+
+    overexpr_1_df, underexpr_1_df = overexpr_1_df.rename(columns=overexpr_1_col_names), underexpr_1_df.rename(columns=underexpr_col_1_names)
+    overexpr_0_df, underexpr_0_df = overexpr_0_df.rename(columns=overexpr_0_col_names), underexpr_0_df.rename(columns=underexpr_col_0_names)
+
+    df_out = pd.concat([ overexpr_1_df, underexpr_1_df, overexpr_0_df, underexpr_0_df], axis=1, join="inner", verify_integrity=True)
+    return df_out
+
+def request_gos(go_list):
+    url = "https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/"
+    go_terms = ""
+    for i, g in enumerate(go_list):
+        if i == len(go_list) - 1:
+            go_terms += g
+        else:
+            go_terms += g + ","
+
+
+    go_terms = urllib.parse.quote(go_terms)
+    url += go_terms
+    res = requests.get(url, headers={"Accept" : "application/json"})
+    res = res.json()
+    return res["results"]
+
+def filter_gos_ns(go_lst, namespace):
+    res = request_gos(go_lst[:5])
+    gos = []
+    for r in res["results"]:
+        if r["aspect"] == namespace:
+            gos.append(r)
+
+    return gos
+
+def create_go_df(go_lst):
+    res = request_gos(go_lst)
+    go_dict = {"ID": [], "Name": []}
+    for r in res:
+        go_dict["ID"].append(r["id"])
+        go_dict["Name"].append(r["name"])
+
+    df = pd.DataFrame.from_dict(go_dict)
+    return df
+
+def run_gene_enrich(study_lst, pop_lst, path, sym2geneid, ns='BP,MF,CC', convert_study=True, convert_pop=True, p_val=0.05):
+
+    if convert_study: study_ids = convert_symbol_to_geneid(study_lst, sym2geneid)
+    else: study_ids = study_lst
+    if convert_pop: pop_ids = convert_symbol_to_geneid(pop_lst, sym2geneid)
+    else: pop_ids = pop_lst
+
+    study_path, pop_path = os.path.join(path, "study_ids"), os.path.join(path, "pop_ids")
+    with open(study_path, "w") as fp:
+        print_array(study_ids, fp)
+
+    with open(pop_path, "w") as fp:
+        print_array(pop_ids, fp)
+
+    opt = {
+        'annofmt': None,
+        'alpha' : 0.05,
+        'compare' : False,
+        'filenames' : [study_path,
+                        pop_path, 'gene2go'],
+        'goslim' : 'datasets/goslim_generic.obo',
+        'indent' : False,
+        'method' : 'bonferroni,sidak,holm,fdr_bh',
+        # 'method': 'fdr_bh',
+        'min_overlap' : 0.7,
+        'no_propagate_counts' : False,
+        'obo' : 'datasets/go-basic.obo',
+        # 'outfile' : 'datasets/goea_tx_bp.txt',
+        'outfile_detail' : None,
+        'ns': ns,
+        'pval' : p_val,
+        'pval_field' : 'uncorrected',
+        'pvalcalc' : 'fisher',
+        'ratio' : None,
+        'relationship': True,
+        'relationships': None,
+        'sections' : None,
+        'ev_inc': None,
+        'ev_exc': None,
+        'taxid': 9606
+        # BROAD 'remove_goids': None,
+        }
+    args = cx.namedtuple("Namespace", " ".join(opt.keys()))
+    args = args(**opt)
+    goea = GoeaCliFnc(args)
+    res = goea.get_results_sig()
+    res_path = os.path.join(path, "go_ge_{0}.tsv".format(ns))
+    goea.prt_outfiles_flat(res, [res_path])
+    return pd.read_table(res_path)
+
+def find_overlap_go(lst1, lst2):
+    lst1 = [x for x in lst1 if x.startswith("GO:")]
+    lst2 = [x for x in lst2 if x.startswith("GO:")]
+    overlap = list(set(lst1) & set(lst2))
+    print("Num overlap: " + str(len(overlap)))
+    diff_1 = list(set(lst1) - set(lst2))
+    print("Num found in list 1, not in list 2:" + str(len(diff_1)))
+    diff_2 = list(set(lst2) - set(lst1))
+    print("Num found in list 2, not in list 1: " + str(len(diff_2)))
+    return overlap, diff_1, diff_2
+
+
+def draw_gos(lst1, lst2, color_1="#3bd163", color_2="#7276e0"):
+    arg = "/home/xabush/venv/bin/go_plot.py  "
+    for i in lst1:
+        arg += "{}{} ".format(i, color_1)
+
+    for i in lst2:
+        arg += "{}{} ".format(i, color_2)
+
+    arg += "-o datasets/aaa_lin.png --gaf=datasets/goa_human.gaf"
+    print(arg)
+    cp = subprocess.run([arg], capture_output=True, shell=True, check=True)
+    print(cp.stdout)
+    return Image(filename="datasets/aaa_lin.png")
+
+def semantic_sim_matrix(lst_1, lst_2, godag, termcounts):
+    mat = np.zeros(shape=(len(lst_1), len(lst_2)))
+
+    for i, go_1 in enumerate(lst_1):
+        for j, go_2 in enumerate(lst_2):
+            mat[i, j] = lin_sim(go_1, go_2, godag, termcounts)
+
+    return mat
+
+
+def filter_similar_gos(lst_1, lst_2, godag, termcounts, score=0.4):
+    idx = []
+    for i, go_1 in enumerate(lst_1):
+        for j, go_2 in enumerate(lst_2):
+            sim = lin_sim(go_1, go_2, godag, termcounts)
+            if sim > score:
+                idx.append(i)
+                break
+    res = lst_1
+    for i in reversed(idx):
+        del res[i]
+    return res
+
+def abstract_download(pmids):
+    """
+        This method returns abstract for a given pmid and add to the abstract data
+    """
+
+    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&rettype=abstract"
+    collected_abstract = {}
+
+    ids_str_ls = ','.join(pmids)
+    url = "{0}&id={1}".format(base_url, ids_str_ls)
+    response = requests.get(url)
+    response = response.text
+    root = ET.fromstring(response)
+
+    articles = root.findall("./PubmedArticle")
+    pubmed_ids = []
+    abstracts = []
+    invalid_ids = []
+    for article in articles:
+        pubmed_elms = article.findall("./MedlineCitation/PMID")
+        abstract_elms = article.findall('./MedlineCitation/Article/Abstract/AbstractText')
+
+        pubmed_id = pubmed_elms[0].text
+        abstract = None
+        try:
+            if len(abstract_elms) > 0:
+                if len(abstract_elms) > 1 and "Label" in abstract_elms[0].attrib:
+                    abstract_elm = [x.text for x in abstract_elms if x.attrib["Label"].upper() == "CONCLUSION" or x.attrib["Label"].upper() == "CONCLUSIONS"]
+                    if len(abstract_elm) > 0: abstract = abstract_elm[0]
+                    else:
+                        invalid_ids.append(pubmed_id)
+                else:
+                    abstract = abstract_elms[0].text
+
+                pubmed_ids.append(pubmed_id)
+                abstracts.append(abstract)
+            else:
+                invalid_ids.append(pubmed_id)
+        except Exception as e:
+            print(e)
+            print(pubmed_id)
+            sys.exit(1)
+    assert len(pubmed_ids) == len(abstracts)
+
+
+
+    for id, abstract in zip(pubmed_ids, abstracts):
+        collected_abstract[id] = abstract
+
+    return collected_abstract, invalid_ids
